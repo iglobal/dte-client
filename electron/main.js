@@ -1051,11 +1051,14 @@ async function uploadSingleFile(fileName, retryCount = 0) {
     // Reemplazar localhost por 127.0.0.1 para forzar IPv4
     apiUrl = apiUrl.replace('localhost', '127.0.0.1')
 
-    // Enviar el XML completo sin modificaciones (tal como se subió)
+    // Convertir XML a base64 para evitar problemas de codificación
+    const xmlBase64 = xmlBuffer.toString('base64')
+
+    // Enviar el XML en base64
     const response = await axios.post(
       apiUrl,
       {
-        xml_content: xmlContent
+        xml_content: xmlBase64
       },
       {
         headers: {
