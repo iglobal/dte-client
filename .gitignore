@@ -1,0 +1,94 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies
+node_modules/
+.pnpm
+.npm
+
+# Build outputs
+dist/
+dist-renderer/
+dist-electron/
+out/
+build/
+release/
+release-builds/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*.swo
+*~
+
+# OS specific files
+Thumbs.db
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+desktop.ini
+
+# Electron
+*.asar
+
+# TypeScript
+*.tsbuildinfo
+
+# Cache
+.cache
+.parcel-cache
+.eslintcache
+.stylelintcache
+
+# IMPORTANTE: Archivos sensibles del proyecto
+# Configuración almacenada por electron-store (contiene credenciales SMTP, RUT, etc)
+# El archivo de config se crea en: %APPDATA%/dte-client-electron/config.json
+# Pero por si acaso, excluir cualquier config.json que no sea necesario
+
+# Archivos XML de clientes (datos sensibles)
+*.xml
+
+# Carpetas de procesamiento XML (contienen datos de clientes)
+PROCESADO/
+FALLIDOS/
+
+# Archivos de test con datos reales
+test-xmls/
+ejemplos/
+
+# Documentación privada (información interna, specs del cliente, etc)
+docs-private/
+INSTALLATION.md
+API-LARAVEL-SPECS.md
+COMO-PUBLICAR-NUEVA-VERSION.md
+AUTO-UPDATE-SETUP.md
+publish.bat
+publish.ps1
+publish-fixed.bat
+
+# NO ignorar estos archivos importantes
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.node.json
