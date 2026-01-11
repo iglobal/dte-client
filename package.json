@@ -1,6 +1,6 @@
 {
   "name": "dte-client",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Cliente DTE Electron para enviar XMLs a Laravel API",
   "main": "electron/main.js",
   "scripts": {

@@ -712,56 +712,81 @@ async function sendEmailNotification(subject, message, details = {}) {
   }
 }
 
+// Normalizar texto a ASCII puro (sin tildes ni caracteres especiales)
+// C# usaba ASCIIEncoding que solo permite caracteres 0-127
+// Los caracteres > 127 (tildes, ñ, etc.) deben convertirse a equivalentes ASCII
+function normalizarTextoASCII(texto) {
+  // Mapa de caracteres especiales a ASCII
+  const mapaASCII = {
+    'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u',
+    'Á': 'A', 'É': 'E', 'Í': 'I', 'Ó': 'O', 'Ú': 'U',
+    'ñ': 'n', 'Ñ': 'N',
+    'ü': 'u', 'Ü': 'U',
+    'à': 'a', 'è': 'e', 'ì': 'i', 'ò': 'o', 'ù': 'u',
+    'À': 'A', 'È': 'E', 'Ì': 'I', 'Ò': 'O', 'Ù': 'U',
+    'â': 'a', 'ê': 'e', 'î': 'i', 'ô': 'o', 'û': 'u',
+    'Â': 'A', 'Ê': 'E', 'Î': 'I', 'Ô': 'O', 'Û': 'U',
+    'ç': 'c', 'Ç': 'C'
+  }
+
+  // Reemplazar cada carácter no-ASCII (> 127) con su equivalente ASCII
+  return texto.replace(/[^\x00-\x7F]/g, char => mapaASCII[char] || '')
+}
+
 // Generar PDF417 del TED (usando TED generado desde MySQL, no del XML)
+// IMPORTANTE: Esta función lanza error si falla, para que el proceso principal lo capture
 async function generatePDF417FromTED(xmlFilePath, tedContent, fileName) {
   if (!store.get('generatePDF417')) {
     return // PDF417 desactivado
   }
 
-  try {
-    const { pngPath } = getPaths()
+  const { pngPath } = getPaths()
 
-    // Crear carpeta PNG si no existe
-    if (!fs.existsSync(pngPath)) {
-      fs.mkdirSync(pngPath, { recursive: true })
-    }
-
-
-    // Generar PDF417 usando bwip-js según especificaciones SII Chile
-    // Ref: A.2.5 Reglas Para La Generación e Impresión Del Timbre PDF417
-    const pngBuffer = await bwipjs.toBuffer({
-      bcid: 'pdf417',           // Tipo de código de barras
-      text: tedContent,         // Contenido del TED exacto
-
-      // Especificaciones SII:
-      eclevel: 5,               // Error Correction Level 5 (requerido por SII)
-      columns: 12,              // Número de columnas de datos
-
-      // Dimensiones según SII:
-      // X Dim mínimo: 6.7 mils = 0.17018 mm
-      // Y Dim: 3:1 ratio con X = 20.1 mils = 0.51054 mm
-      // Para 300 DPI: 1 mil = 0.0254 mm, 1 pixel a 300dpi = 0.0846667 mm
-      width: 7,                 // X dimension en mils (ancho de barra más angosta) - mínimo 6.7
-      height: 21,               // Y dimension en mils (altura de fila) - ratio 3:1
-
-      // Configuración de renderizado:
-      scale: 3,                 // Escala de píxeles (multiplicador)
-      includetext: false,       // Sin texto visible debajo
-      parsefnc: false,          // No parsear caracteres especiales FNC
-      inkspread: 0,             // Sin compensación de expansión de tinta
-      backgroundcolor: 'ffffff' // Fondo blanco para quiet zone
-    })
-
-    // Guardar PNG con el nombre base del archivo XML
-    const baseFileName = path.basename(fileName, '.xml')
-    const pngFilePath = path.join(pngPath, `${baseFileName}.png`)
-    fs.writeFileSync(pngFilePath, pngBuffer)
-
-    addLog('success', `PDF417 generado: ${baseFileName}.png (${pngBuffer.length} bytes)`)
-
-  } catch (error) {
-    addLog('error', `Error generando PDF417: ${error.message}`)
+  // Crear carpeta PNG si no existe
+  if (!fs.existsSync(pngPath)) {
+    fs.mkdirSync(pngPath, { recursive: true })
   }
+
+  // Generar PDF417 usando bwip-js según especificaciones SII Chile
+  // Ref: A.2.5 Reglas Para La Generación e Impresión Del Timbre PDF417
+  //
+  // NOTA IMPORTANTE sobre la codificación:
+  // El sistema C# legacy usaba ASCIIEncoding que solo acepta caracteres 0-127.
+  // Los caracteres con tildes (á, é, í, ó, ú, ñ) son > 127 y deben convertirse
+  // a sus equivalentes ASCII sin tilde (a, e, i, o, u, n).
+  //
+  // MySQL NO está aplicando esta normalización, por lo que debemos hacerlo aquí.
+  const tedASCII = normalizarTextoASCII(tedContent)
+
+  const pngBuffer = await bwipjs.toBuffer({
+    bcid: 'pdf417',           // Tipo de código de barras
+    text: tedASCII,           // TED normalizado a ASCII puro (sin tildes)
+
+    // Especificaciones SII:
+    eclevel: 5,               // Error Correction Level 5 (requerido por SII)
+    columns: 12,              // Número de columnas de datos
+
+    // Dimensiones según SII:
+    // X Dim mínimo: 6.7 mils = 0.17018 mm
+    // Y Dim: 3:1 ratio con X = 20.1 mils = 0.51054 mm
+    // Para 300 DPI: 1 mil = 0.0254 mm, 1 pixel a 300dpi = 0.0846667 mm
+    width: 7,                 // X dimension en mils (ancho de barra más angosta) - mínimo 6.7
+    height: 21,               // Y dimension en mils (altura de fila) - ratio 3:1
+
+    // Configuración de renderizado:
+    scale: 3,                 // Escala de píxeles (multiplicador)
+    includetext: false,       // Sin texto visible debajo
+    parsefnc: false,          // No parsear caracteres especiales FNC
+    inkspread: 0,             // Sin compensación de expansión de tinta
+    backgroundcolor: 'ffffff' // Fondo blanco para quiet zone
+  })
+
+  // Guardar PNG con el nombre base del archivo XML
+  const baseFileName = path.basename(fileName, '.xml')
+  const pngFilePath = path.join(pngPath, `${baseFileName}.png`)
+  fs.writeFileSync(pngFilePath, pngBuffer)
+
+  addLog('success', `PDF417 generado: ${baseFileName}.png (${pngBuffer.length} bytes)`)
 }
 
 // Procesador de cola - procesa archivos uno por uno
