@@ -21,7 +21,7 @@ const store = new Store({
     autoStart: true,
     watcherEnabled: false,
     generatePDF417: true, // Generar código PDF417 del TED
-    uploadInterval: 120000, // Intervalo para subir archivos de pending/ (2 minutos)
+    uploadInterval: 30000, // Intervalo para subir archivos de pending/ (30 segundos)
     // Configuración de MySQL para conectar con el ERP
     mysqlHost: 'localhost',
     mysqlPort: 3306,
@@ -44,6 +44,12 @@ const store = new Store({
     retryDelay: 10000 // 10 segundos
   }
 })
+
+// Forzar actualización de valores por defecto si están desactualizados
+if (store.get('uploadInterval') === 120000) {
+  store.set('uploadInterval', 30000)
+  console.log('Upload interval actualizado a 30 segundos')
+}
 
 let mainWindow
 let tray = null
