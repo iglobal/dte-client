@@ -1098,13 +1098,24 @@ async function uploadSingleFile(fileName, retryCount = 0) {
     // Extraer mensaje de error del API si está disponible
     if (error.response?.data) {
       const apiError = error.response.data
+
+      // Log completo de la respuesta del API para debugging
+      addLog('error', `Respuesta completa del API: ${JSON.stringify(apiError, null, 2)}`)
+
       if (apiError.message) {
         errorMessage = apiError.message
       }
       // Si hay errores de validación, agregarlos
       if (apiError.errors) {
         const validationErrors = Object.values(apiError.errors).flat().join(', ')
-        errorMessage += ` - ${validationErrors}`
+        errorMessage += ` - Validación: ${validationErrors}`
+      }
+      // Si hay detalles adicionales (trace, exception, etc.)
+      if (apiError.error) {
+        errorMessage += ` - Detalles: ${apiError.error}`
+      }
+      if (apiError.exception) {
+        errorMessage += ` - Exception: ${apiError.exception}`
       }
     }
 
