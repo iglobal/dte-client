@@ -1,6 +1,6 @@
 {
   "name": "dte-client",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Cliente DTE Electron para enviar XMLs a Laravel API",
   "main": "electron/main.js",
   "scripts": {
@@ -68,7 +68,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "iGlobal DTE Client"
+      "shortcutName": "iGlobal DTE Client",
+      "artifactName": "iGlobal-DTE-Client-Setup-${version}.${ext}"
     },
     "publish": {
       "provider": "github",
