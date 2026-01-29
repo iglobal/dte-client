@@ -1484,6 +1484,44 @@ ipcMain.handle('test-api', async (event, apiUrl, apiToken) => {
   }
 })
 
+// Handler: Probar conexión MySQL
+ipcMain.handle('test-mysql', async (event, config) => {
+  try {
+    addLog('info', `Probando conexión MySQL: ${config.user}@${config.host}:${config.port}/${config.database}`)
+
+    const connection = await mysql.createConnection({
+      host: config.host,
+      port: config.port,
+      user: config.user,
+      password: config.password,
+      database: config.database
+    })
+
+    // Probar conexión simple
+    await connection.execute('SELECT 1')
+
+    // Cerrar conexión
+    await connection.end()
+
+    addLog('success', `Conexión MySQL exitosa a ${config.database}`)
+    return { success: true, message: `Conexión exitosa a base de datos "${config.database}"` }
+  } catch (error) {
+    addLog('error', `Error conectando a MySQL: ${error.message}`)
+
+    // Mensajes más amigables según el tipo de error
+    let friendlyMessage = error.message
+    if (error.code === 'ECONNREFUSED') {
+      friendlyMessage = 'No se puede conectar al servidor MySQL. Verifica que esté corriendo.'
+    } else if (error.code === 'ER_ACCESS_DENIED_ERROR') {
+      friendlyMessage = 'Usuario o contraseña incorrectos'
+    } else if (error.code === 'ER_BAD_DB_ERROR') {
+      friendlyMessage = `La base de datos "${config.database}" no existe`
+    }
+
+    return { success: false, message: friendlyMessage }
+  }
+})
+
 // ============================================
 // AUTO-UPDATER CONFIGURATION
 // ============================================

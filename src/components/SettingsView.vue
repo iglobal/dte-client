@@ -182,6 +182,27 @@
           </div>
         </div>
 
+        <!-- Probar Conexión MySQL -->
+        <div class="flex justify-end">
+          <button
+            @click="testMysqlConnection"
+            :disabled="testingMysql"
+            class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-blue-300 transition-colors flex items-center space-x-2"
+          >
+            <svg v-if="!testingMysql" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+            </svg>
+            <svg v-else class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>{{ testingMysql ? 'Probando conexión...' : 'Probar Conexión MySQL' }}</span>
+          </button>
+        </div>
+        <p v-if="mysqlTestResult" :class="mysqlTestResult.success ? 'text-green-600' : 'text-red-600'" class="text-sm mt-2">
+          {{ mysqlTestResult.message }}
+        </p>
+
         <!-- Separador -->
         <div class="border-t border-slate-200 pt-6">
           <h3 class="text-lg font-semibold text-slate-800 mb-4">Descarga de CAF desde API</h3>
@@ -457,6 +478,8 @@ const showSaveMessage = ref(false)
 const testingApi = ref(false)
 const apiTestResult = ref<{ success: boolean; message: string } | null>(null)
 const downloadingCAF = ref(false)
+const testingMysql = ref(false)
+const mysqlTestResult = ref<{ success: boolean; message: string } | null>(null)
 
 // Sincronizar con props
 watch(() => props.config, (newConfig) => {
@@ -500,6 +523,31 @@ async function testApiConnection() {
     apiTestResult.value = { success: false, message: error.message }
   } finally {
     testingApi.value = false
+  }
+}
+
+async function testMysqlConnection() {
+  if (!localConfig.value.mysqlHost || !localConfig.value.mysqlDatabase) {
+    mysqlTestResult.value = { success: false, message: 'Por favor completa Host y Database' }
+    return
+  }
+
+  testingMysql.value = true
+  mysqlTestResult.value = null
+
+  try {
+    const result = await window.electronAPI.testMysql({
+      host: localConfig.value.mysqlHost,
+      port: localConfig.value.mysqlPort,
+      user: localConfig.value.mysqlUser,
+      password: localConfig.value.mysqlPassword,
+      database: localConfig.value.mysqlDatabase
+    })
+    mysqlTestResult.value = result
+  } catch (error: any) {
+    mysqlTestResult.value = { success: false, message: error.message }
+  } finally {
+    testingMysql.value = false
   }
 }
 

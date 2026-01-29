@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Utilidades
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   testApi: (apiUrl) => ipcRenderer.invoke('test-api', apiUrl),
+  testMysql: (config) => ipcRenderer.invoke('test-mysql', config),
 
   // CAF y subida de archivos
   syncCAF: () => ipcRenderer.invoke('sync-caf'),
