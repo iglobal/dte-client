@@ -487,15 +487,25 @@ async function syncCAFFromAPI() {
       try {
         const {
           id: cafId,
-          documento_id: documentoId,
-          tipo_nombre: tipoNombre,
-          desde,
-          hasta,
-          ultimo_usado: ultimoUsado,
-          disponibles,
-          autorizacion,
+          tipo_documento_id: documentoId,
+          folio_desde: desde,
+          folio_hasta: hasta,
+          folios_disponibles: disponibles,
+          fecha_autorizacion: autorizacion,
+          ambiente,
+          activo,
           xml: xmlBase64
         } = cafItem
+
+        // Calcular ultimo_usado desde folios_disponibles
+        const totalFolios = hasta - desde + 1
+        const ultimoUsado = desde + (totalFolios - disponibles) - 1
+
+        // Validar que el XML base64 existe
+        if (!xmlBase64) {
+          addLog('error', `CAF sin contenido XML (tipo ${documentoId}). Campos recibidos: ${Object.keys(cafItem).join(', ')}`)
+          continue
+        }
 
         // Decodificar XML del CAF
         const xmlContent = Buffer.from(xmlBase64, 'base64').toString('utf8')
