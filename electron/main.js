@@ -585,12 +585,12 @@ async function syncCAFFromAPI() {
           const localFilePath = path.join(procesadoPath, cafData.fol_nombre)
           fs.writeFileSync(localFilePath, xmlContent, 'utf8')
 
-          addLog('success', `✅ CAF insertado: ${tipoNombre} (${desde}-${hasta}), disponibles: ${disponibles}`)
+          addLog('success', `✅ CAF insertado: Tipo ${documentoId} (${desde}-${hasta}), disponibles: ${disponibles}`)
           cafCount++
 
         } catch (dbError) {
           if (dbError.code === 'ER_DUP_ENTRY') {
-            addLog('info', `CAF duplicado: ${tipoNombre}, saltando...`)
+            addLog('info', `CAF duplicado: Tipo ${documentoId}, saltando...`)
             cafUpdated++
           } else {
             addLog('error', `Error insertando CAF tipo ${documentoId}: ${dbError.message}`)
@@ -1261,11 +1261,15 @@ function startWatcher() {
     return false
   }
 
-  const { watchPath } = getPaths()
+  const { watchPath, processedPath, failedPath, pendingPath, sentPath, pngPath, folioPath } = getPaths()
 
-  if (!fs.existsSync(watchPath)) {
-    addLog('error', `La carpeta no existe: ${watchPath}`)
-    return false
+  // Crear todas las carpetas necesarias si no existen
+  const carpetas = [watchPath, processedPath, failedPath, pendingPath, sentPath, pngPath, folioPath]
+  for (const carpeta of carpetas) {
+    if (!fs.existsSync(carpeta)) {
+      fs.mkdirSync(carpeta, { recursive: true })
+      addLog('info', `Carpeta creada: ${carpeta}`)
+    }
   }
 
   if (watcher) {
