@@ -270,6 +270,35 @@
 
         <!-- Separador -->
         <div class="border-t border-slate-200 pt-6">
+          <h3 class="text-lg font-semibold text-slate-800 mb-4">Sincronizar Empresa</h3>
+          <p class="text-sm text-slate-500 mb-4">Descarga la información de la empresa desde el API y la inyecta en tu base de datos MySQL local</p>
+        </div>
+
+        <!-- Botón Sincronizar Empresa -->
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-3">
+            <button
+              @click="syncEmpresa"
+              :disabled="syncingEmpresa"
+              class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+            >
+              <svg v-if="!syncingEmpresa" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <svg v-else class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span>{{ syncingEmpresa ? 'Sincronizando...' : 'Sincronizar Empresa' }}</span>
+            </button>
+          </div>
+        </div>
+        <p v-if="empresaSyncResult" :class="empresaSyncResult.success ? 'text-green-600' : 'text-red-600'" class="text-sm mt-2">
+          {{ empresaSyncResult.message }}
+        </p>
+
+        <!-- Separador -->
+        <div class="border-t border-slate-200 pt-6">
           <h3 class="text-lg font-semibold text-slate-800 mb-4">Generación de PDF417</h3>
         </div>
 
@@ -480,6 +509,8 @@ const apiTestResult = ref<{ success: boolean; message: string } | null>(null)
 const downloadingCAF = ref(false)
 const testingMysql = ref(false)
 const mysqlTestResult = ref<{ success: boolean; message: string } | null>(null)
+const syncingEmpresa = ref(false)
+const empresaSyncResult = ref<{ success: boolean; message: string } | null>(null)
 
 // Sincronizar con props
 watch(() => props.config, (newConfig) => {
@@ -548,6 +579,20 @@ async function testMysqlConnection() {
     mysqlTestResult.value = { success: false, message: error.message }
   } finally {
     testingMysql.value = false
+  }
+}
+
+async function syncEmpresa() {
+  syncingEmpresa.value = true
+  empresaSyncResult.value = null
+
+  try {
+    const result = await window.electronAPI.syncEmpresa()
+    empresaSyncResult.value = result
+  } catch (error: any) {
+    empresaSyncResult.value = { success: false, message: error.message }
+  } finally {
+    syncingEmpresa.value = false
   }
 }
 

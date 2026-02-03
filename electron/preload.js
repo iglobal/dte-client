@@ -28,5 +28,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // CAF y subida de archivos
   syncCAF: () => ipcRenderer.invoke('sync-caf'),
+  syncEmpresa: () => ipcRenderer.invoke('sync-empresa'),
   uploadPending: () => ipcRenderer.invoke('upload-pending')
 })

@@ -1451,6 +1451,128 @@ ipcMain.handle('sync-caf', async () => {
   return await syncCAFFromAPI()
 })
 
+// Handler: Sincronizar información de empresa desde API a MySQL local
+ipcMain.handle('sync-empresa', async () => {
+  try {
+    const apiToken = store.get('apiToken')
+    const rut = store.get('rut')
+
+    if (!apiToken || !rut) {
+      return { success: false, message: 'Configura el Bearer Token y el RUT primero' }
+    }
+
+    // Construir URL del endpoint empresa desde la URL del API
+    let apiUrl = store.get('apiUrl')
+    const baseUrl = apiUrl.replace(/\/api\/v1\/documentos.*$/, '')
+    const empresaUrl = `${baseUrl}/api/v1/empresa`.replace('localhost', '127.0.0.1')
+
+    addLog('info', `Sincronizando empresa desde: ${empresaUrl}`)
+
+    // Obtener empresa desde API Laravel
+    const response = await axios.get(empresaUrl, {
+      headers: {
+        'Authorization': `Bearer ${apiToken}`,
+        'Accept': 'application/json'
+      },
+      timeout: 30000,
+      family: 4
+    })
+
+    if (!response.data || !response.data.empresa) {
+      return { success: false, message: 'El API no retornó datos de empresa' }
+    }
+
+    const empresa = response.data.empresa
+
+    // Conectar a MySQL local
+    const connection = await mysql.createConnection({
+      host: store.get('mysqlHost'),
+      port: store.get('mysqlPort'),
+      user: store.get('mysqlUser'),
+      password: store.get('mysqlPassword'),
+      database: store.get('mysqlDatabase')
+    })
+
+    // Preparar RUT sin guión para la columna ORG_RUT
+    const rutSinGuion = rut.replace('-', '')
+
+    // Verificar si la empresa ya existe
+    const [existing] = await connection.execute(
+      'SELECT ORG_RUT FROM empresa WHERE ORG_RUT = ?',
+      [rutSinGuion]
+    )
+
+    if (existing.length > 0) {
+      // Actualizar empresa existente
+      await connection.execute(
+        `UPDATE empresa SET
+          ORG_NOMBRE = ?, org_direccion = ?, ORG_FONO = ?, ORG_MAIL = ?,
+          ORG_WEBSITE = ?, ORG_GIRO = ?, ORG_REPRESENTANTE = ?,
+          ORG_REPRESENTANTE_RUT = ?, ORG_CIUDAD = ?, ORG_COMUNA = ?,
+          ORG_ACTIVIDAD = ?, ORG_FECHA_RESOL = ?, ORG_NRO_RESOL = ?,
+          ORG_OFICINA_SII = ?, ORG_RAZON_IMPRESO = ?
+        WHERE ORG_RUT = ?`,
+        [
+          empresa.nombre || '',
+          empresa.direccion || '',
+          empresa.fono || '',
+          empresa.mail || '',
+          empresa.website || '',
+          empresa.giro || '',
+          empresa.representante || '',
+          empresa.representante_rut || '',
+          empresa.ciudad || '',
+          empresa.comuna || '',
+          empresa.actividad || '',
+          empresa.fecha_resolucion || '',
+          empresa.nro_resolucion || '',
+          empresa.oficina_sii || '',
+          empresa.razon_impreso || empresa.nombre || '',
+          rutSinGuion
+        ]
+      )
+      addLog('success', `✅ Empresa actualizada: ${empresa.nombre}`)
+    } else {
+      // Insertar empresa nueva
+      await connection.execute(
+        `INSERT INTO empresa (ORG_RUT, ORG_NOMBRE, org_direccion, ORG_FONO, ORG_MAIL,
+          ORG_WEBSITE, ORG_GIRO, ORG_REPRESENTANTE, ORG_REPRESENTANTE_RUT,
+          ORG_CIUDAD, ORG_COMUNA, ORG_ACTIVIDAD, ORG_FECHA_RESOL, ORG_NRO_RESOL,
+          ORG_OFICINA_SII, ORG_RAZON_IMPRESO, ORG_SUCURSAL)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          rutSinGuion,
+          empresa.nombre || '',
+          empresa.direccion || '',
+          empresa.fono || '',
+          empresa.mail || '',
+          empresa.website || '',
+          empresa.giro || '',
+          empresa.representante || '',
+          empresa.representante_rut || '',
+          empresa.ciudad || '',
+          empresa.comuna || '',
+          empresa.actividad || '',
+          empresa.fecha_resolucion || '',
+          empresa.nro_resolucion || '',
+          empresa.oficina_sii || '',
+          empresa.razon_impreso || empresa.nombre || '',
+          '0'
+        ]
+      )
+      addLog('success', `✅ Empresa insertada: ${empresa.nombre}`)
+    }
+
+    await connection.end()
+    return { success: true, message: `Empresa sincronizada: ${empresa.nombre}` }
+
+  } catch (error) {
+    const errorMsg = error.response?.data?.message || error.message
+    addLog('error', `❌ Error sincronizando empresa: ${errorMsg}`)
+    return { success: false, message: errorMsg }
+  }
+})
+
 ipcMain.handle('upload-pending', async () => {
   addLog('info', 'Subida manual de archivos PENDING solicitada')
   await uploadPendingFiles()
