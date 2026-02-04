@@ -1163,10 +1163,10 @@ async function uploadSingleFile(fileName, retryCount = 0) {
       errorMessage.includes('timeout') ||
       errorMessage.includes('network')
 
-    // Detectar errores que NO deben reintentar (configuración incorrecta)
-    const isConfigError = httpStatus === 401 || httpStatus === 403
+    // Detectar errores que NO deben reintentar (determinísticos)
+    const isConfigError = httpStatus === 401 || httpStatus === 403 || httpStatus === 422
 
-    // Errores de configuración (401 Unauthorized, 403 Forbidden) - mover a FALLIDOS inmediatamente
+    // Errores determinísticos (401, 403, 422) - mover a FALLIDOS inmediatamente
     if (isConfigError) {
       addLog('error', `Error de autenticación/autorización: ${errorMessage}`)
 
@@ -1189,7 +1189,7 @@ async function uploadSingleFile(fileName, retryCount = 0) {
       const folio = folioMatch ? folioMatch[1] : 'N/A'
 
       await sendEmailNotification(
-        httpStatus === 401 ? 'Error de autenticación' : 'Error de autorización',
+        httpStatus === 401 ? 'Error de autenticación' : httpStatus === 403 ? 'Error de autorización' : 'Error de validación',
         `${errorMessage}. Archivo: ${fileName}`,
         {
           fileName: fileName,
