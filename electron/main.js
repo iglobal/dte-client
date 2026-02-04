@@ -1070,12 +1070,30 @@ async function uploadSingleFile(fileName, retryCount = 0) {
     // Convertir XML a base64 para evitar problemas de codificación
     const xmlBase64 = xmlBuffer.toString('base64')
 
-    // Enviar el XML en base64
+    // Extraer fecha_timbre del nombre del archivo si existe
+    // Formato: DTE_RUT_TIPO_FOLIO_YYYY-MM-DDTHHMMSS.xml
+    // Ejemplo: DTE_78191021K_33_40_2024-12-01T112854.xml → "2024-12-01T11:28:54"
+    let fechaTimbre = null
+    const partes = path.basename(fileName, '.xml').split('_')
+    if (partes.length >= 5) {
+      const ts = partes[4]
+      const match = ts.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})(\d{2})$/)
+      if (match) {
+        fechaTimbre = `${match[1]}T${match[2]}:${match[3]}:${match[4]}`
+        addLog('info', `Fecha timbre extraída: ${fechaTimbre}`)
+      }
+    }
+
+    // Construir payload
+    const payload = { xml_content: xmlBase64 }
+    if (fechaTimbre) {
+      payload.fecha_timbre = fechaTimbre
+    }
+
+    // Enviar el XML en base64 junto con fecha_timbre
     const response = await axios.post(
       apiUrl,
-      {
-        xml_content: xmlBase64
-      },
+      payload,
       {
         headers: {
           'Authorization': `Bearer ${apiToken}`,
