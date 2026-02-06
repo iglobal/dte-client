@@ -1133,24 +1133,30 @@ async function uploadSingleFile(fileName, retryCount = 0) {
     if (error.response?.data) {
       const apiError = error.response.data
 
-      // Log completo de la respuesta del API para debugging
-      addLog('error', `Respuesta completa del API: ${JSON.stringify(apiError, null, 2)}`)
-
+      // Construir mensaje amigable
       if (apiError.message) {
         errorMessage = apiError.message
       }
+
       // Si hay errores de validación, agregarlos
       if (apiError.errors) {
         const validationErrors = Object.values(apiError.errors).flat().join(', ')
-        errorMessage += ` - Validación: ${validationErrors}`
+        errorMessage += ` - ${validationErrors}`
       }
-      // Si hay detalles adicionales (trace, exception, etc.)
-      if (apiError.error) {
-        errorMessage += ` - Detalles: ${apiError.error}`
+
+      // Detectar error 404 de ruta no encontrada
+      if (httpStatus === 404 && apiError.message?.includes('route') && apiError.message?.includes('could not be found')) {
+        errorMessage = `La ruta del API no existe. Verifica la URL en Configuración.`
       }
-      if (apiError.exception) {
-        errorMessage += ` - Exception: ${apiError.exception}`
+
+      // Log técnico completo solo si es útil (sin stack trace masivo)
+      const debugInfo = {
+        status: httpStatus,
+        message: apiError.message,
+        exception: apiError.exception,
+        errors: apiError.errors
       }
+      addLog('error', `Error del API: ${JSON.stringify(debugInfo, null, 2)}`)
     }
 
     // Detectar errores de red (sin conexión)
