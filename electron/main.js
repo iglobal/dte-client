@@ -12,6 +12,37 @@ const iconv = require('iconv-lite')
 const os = require('os')
 // Removido: Google Cloud Storage - ahora usamos API Laravel
 
+// ===== HELPER: TIMESTAMP EN ZONA HORARIA DE CHILE =====
+
+/**
+ * Obtiene la fecha/hora actual en zona horaria de Chile (America/Santiago)
+ * @returns {string} Timestamp en formato ISO sin milisegundos (ej: 2024-12-01T11:28:54)
+ */
+function getChileTimestamp() {
+  const now = new Date()
+  // Convertir a zona horaria de Chile (America/Santiago)
+  const chileTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Santiago' }))
+
+  // Formatear manualmente como ISO: YYYY-MM-DDTHH:mm:ss
+  const year = chileTime.getFullYear()
+  const month = String(chileTime.getMonth() + 1).padStart(2, '0')
+  const day = String(chileTime.getDate()).padStart(2, '0')
+  const hours = String(chileTime.getHours()).padStart(2, '0')
+  const minutes = String(chileTime.getMinutes()).padStart(2, '0')
+  const seconds = String(chileTime.getSeconds()).padStart(2, '0')
+
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`
+}
+
+/**
+ * Formatea timestamp para nombre de archivo (sin guiones ni dos puntos)
+ * @param {string} timestamp - Timestamp en formato ISO
+ * @returns {string} Timestamp formateado para archivo (ej: 20241201T112854)
+ */
+function formatTimestampForFilename(timestamp) {
+  return timestamp.replace(/[-:]/g, '').replace('T', 'T')
+}
+
 // ===== SISTEMA DE SEGURIDAD PARA CONTRASEÑA DE ADMINISTRADOR =====
 
 // Obtener clave de encriptación basada en hardware (única por máquina)
@@ -335,7 +366,7 @@ function addLog(type, message) {
 
   const log = {
     id: logIdCounter,
-    timestamp: new Date().toISOString(),
+    timestamp: getChileTimestamp(),
     type, // info, success, error, warning
     message
   }
@@ -461,10 +492,9 @@ async function generateTED(xmlContent, rutEmisor, tipoDTE, folio, tmstFirma = nu
       return null
     }
 
-    // Usar timestamp proporcionado o generar uno nuevo
+    // Usar timestamp proporcionado o generar uno nuevo con hora de Chile
     if (!tmstFirma) {
-      const now = new Date()
-      tmstFirma = now.toISOString().replace(/\.\d{3}Z$/, '')
+      tmstFirma = getChileTimestamp()
     }
 
     // Construir DD (igual que en C#)
@@ -858,6 +888,7 @@ async function sendEmailNotification(subject, message, details = {}) {
           </p>
           <p style="color: #9ca3af; font-size: 11px; margin: 0;">
             Empresa: ${store.get('rut')} | Fecha: ${new Date().toLocaleString('es-CL', {
+              timeZone: 'America/Santiago',
               dateStyle: 'long',
               timeStyle: 'short'
             })}
@@ -1063,21 +1094,22 @@ async function processXMLFile(filePath) {
         fs.mkdirSync(processedPath, { recursive: true })
       }
 
-      const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '')
-      const processedFilePath = path.join(processedPath, `${path.basename(fileName, '.xml')}_${timestamp}.xml`)
+      const timestamp = getChileTimestamp()
+      const timestampForFileName = formatTimestampForFilename(timestamp)
+      const processedFilePath = path.join(processedPath, `${path.basename(fileName, '.xml')}_${timestampForFileName}.xml`)
       fs.renameSync(filePath, processedFilePath)
 
       return { success: true, fileName, skipped: true }
     }
 
-    // Generar timestamp AHORA (antes de generar TED y PNG)
+    // Generar timestamp AHORA usando zona horaria de Chile (antes de generar TED y PNG)
     // Este timestamp se usará para:
     // 1. Renombrar el archivo XML
     // 2. Incluirlo en el TED para generar el PNG
     // 3. Enviarlo al API para que genere el mismo PNG
-    const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '') // Formato: 2024-12-01T11:28:54
-    const timestampForFileName = timestamp.replace(/[-:]/g, '').replace('T', 'T') // Formato: 2024-12-01T112854
-    addLog('info', `🕐 Timestamp generado: ${timestamp}`)
+    const timestamp = getChileTimestamp() // Formato: 2024-12-01T11:28:54 (hora de Chile)
+    const timestampForFileName = formatTimestampForFilename(timestamp) // Formato: 20241201T112854
+    addLog('info', `🕐 Timestamp generado (Chile): ${timestamp}`)
 
     // Construir nuevo nombre de archivo con timestamp
     const baseFileName = path.basename(fileName, '.xml')
