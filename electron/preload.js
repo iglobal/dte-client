@@ -29,5 +29,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // CAF y subida de archivos
   syncCAF: () => ipcRenderer.invoke('sync-caf'),
   syncEmpresa: () => ipcRenderer.invoke('sync-empresa'),
-  uploadPending: () => ipcRenderer.invoke('upload-pending')
+  uploadPending: () => ipcRenderer.invoke('upload-pending'),
+
+  // Gestión de contraseña de administrador
+  hasAdminPassword: () => ipcRenderer.invoke('has-admin-password'),
+  verifyAdminPassword: (password) => ipcRenderer.invoke('verify-admin-password', password),
+  getAdminPassword: () => ipcRenderer.invoke('get-admin-password'),
+  changeAdminPassword: (currentPassword, newPassword) => ipcRenderer.invoke('change-admin-password', currentPassword, newPassword),
+  onShowInitialPassword: (callback) => {
+    ipcRenderer.on('show-initial-password', (event, password) => callback(password))
+  },
+
+  // SOLO DESARROLLO: Resetear contraseña
+  devResetPassword: () => ipcRenderer.invoke('dev-reset-password')
 })

@@ -7,6 +7,14 @@ export interface ElectronAPI {
   onNewLog: (callback: (log: Log) => void) => void
   selectFolder: () => Promise<string | null>
   testApi: (apiUrl: string) => Promise<{ success: boolean; message: string }>
+  // Gestión de contraseña
+  hasAdminPassword: () => Promise<boolean>
+  verifyAdminPassword: (password: string) => Promise<boolean>
+  getAdminPassword: () => Promise<string | null>
+  changeAdminPassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; message: string }>
+  onShowInitialPassword: (callback: (password: string) => void) => void
+  // SOLO DESARROLLO
+  devResetPassword: () => Promise<{ success: boolean; message: string }>
 }
 
 export interface AppConfig {

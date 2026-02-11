@@ -84,7 +84,7 @@
             </button>
 
             <button
-              @click="activeTab = 'settings'"
+              @click="requestSettingsAccess()"
               class="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
             >
               <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -115,7 +115,7 @@
           Logs
         </button>
         <button
-          @click="activeTab = 'settings'"
+          @click="requestSettingsAccess"
           :class="activeTab === 'settings' ? 'border-blue-500 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'"
           class="py-4 px-1 border-b-2 font-medium text-sm transition-colors"
         >
@@ -206,6 +206,26 @@
         <SettingsView :config="config" @update="updateConfig" />
       </div>
     </main>
+
+    <!-- Password Modals -->
+    <!-- Modal para primera vez: obligar a cambiar contraseña -->
+    <ForceChangePasswordModal
+      :show="showForceChangeModal"
+      :initial-password="initialPassword"
+      @success="handleForceChangeSuccess"
+    />
+
+    <!-- Modal para acceder a configuración -->
+    <PasswordModal
+      :show="showPasswordPrompt"
+      title="Acceso a Configuración"
+      message="Ingresa la contraseña de administrador para acceder a Configuración."
+      :show-password-input="true"
+      :show-cancel="true"
+      submit-text="Ingresar"
+      @submit="handlePasswordSubmit"
+      @cancel="handlePasswordCancel"
+    />
   </div>
 </template>
 
@@ -213,6 +233,8 @@
 import { ref, onMounted } from 'vue'
 import LogsView from './components/LogsView.vue'
 import SettingsView from './components/SettingsView.vue'
+import PasswordModal from './components/PasswordModal.vue'
+import ForceChangePasswordModal from './components/ForceChangePasswordModal.vue'
 
 const activeTab = ref('dashboard')
 const watcherEnabled = ref(false)
@@ -245,6 +267,12 @@ interface Notification {
 const notifications = ref<Notification[]>([])
 let notificationId = 0
 
+// Sistema de protección de contraseña
+const showPasswordPrompt = ref(false)
+const showForceChangeModal = ref(false)
+const initialPassword = ref('')
+const pendingSettingsAccess = ref(false)
+
 function showNotification(type: Notification['type'], message: string) {
   const id = ++notificationId
   notifications.value.push({ id, type, message })
@@ -275,11 +303,46 @@ function getNotificationClass(type: string) {
   }
 }
 
+// Funciones de protección de contraseña
+async function handlePasswordSubmit(password: string) {
+  const isValid = await window.electronAPI.verifyAdminPassword(password)
+
+  if (isValid) {
+    showPasswordPrompt.value = false
+    activeTab.value = 'settings'
+    showNotification('success', 'Acceso concedido a Configuración')
+  } else {
+    showNotification('error', 'Contraseña incorrecta')
+  }
+}
+
+function handlePasswordCancel() {
+  showPasswordPrompt.value = false
+  pendingSettingsAccess.value = false
+}
+
+function requestSettingsAccess() {
+  // Siempre pedir contraseña al acceder a configuración
+  showPasswordPrompt.value = true
+}
+
+function handleForceChangeSuccess() {
+  showForceChangeModal.value = false
+  initialPassword.value = ''
+  showNotification('success', '¡Contraseña configurada! Ahora puedes acceder a Configuración.')
+}
+
 // Cargar configuración
 onMounted(async () => {
   const configData = await window.electronAPI.getConfig()
   config.value = configData
   watcherEnabled.value = configData.watcherEnabled
+
+  // Escuchar evento de contraseña inicial (primera vez)
+  window.electronAPI.onShowInitialPassword((password: string) => {
+    initialPassword.value = password
+    showForceChangeModal.value = true
+  })
 
   // Cargar logs
   const logsData = await window.electronAPI.getLogs()

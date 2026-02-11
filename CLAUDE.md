@@ -161,7 +161,7 @@ C:\Projects\dte-client-electron\
 ### A. Procesamiento de Archivos XML (Flujo Completo)
 
 ```
-1. Usuario coloca XML en carpeta monitoreada (C:\iGlobal\{RUT}\XML\)
+1. Usuario coloca XML en carpeta monitoreada (C:\iGlobal\DTE\{RUT}\XML\)
    │
    ↓
 2. Chokidar detecta nuevo archivo
@@ -450,7 +450,7 @@ CREATE TABLE empresa (
 
   // Sincronización CAF
   cafEnabled: true,
-  folioPath: 'C:\\iGlobal\\RUT_EMPRESA\\FOLIO',
+  folioPath: 'C:\\iGlobal\\DTE\\RUT_EMPRESA\\FOLIO',
 
   // Notificaciones por Email
   emailNotifications: false,
@@ -468,7 +468,7 @@ CREATE TABLE empresa (
 Creada automáticamente según configuración:
 
 ```
-C:\iGlobal\{RUT}\
+C:\iGlobal\DTE\{RUT}\
 ├── XML\                  # Carpeta monitoreada (archivos nuevos detectados aquí)
 │   ├── PENDING\          # Procesados localmente, esperando subida
 │   ├── SENT\             # Subidos exitosamente a API

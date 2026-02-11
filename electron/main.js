@@ -9,19 +9,108 @@ const bwipjs = require('bwip-js')
 const mysql = require('mysql2/promise')
 const crypto = require('crypto')
 const iconv = require('iconv-lite')
+const os = require('os')
 // Removido: Google Cloud Storage - ahora usamos API Laravel
+
+// ===== SISTEMA DE SEGURIDAD PARA CONTRASEÑA DE ADMINISTRADOR =====
+
+// Obtener clave de encriptación basada en hardware (única por máquina)
+function getEncryptionKey() {
+  const machineId = os.hostname() + os.platform() + os.arch()
+  return crypto.createHash('sha256').update(machineId).digest()
+}
+
+// Encriptar contraseña
+function encryptPassword(password) {
+  const algorithm = 'aes-256-cbc'
+  const key = getEncryptionKey()
+  const iv = crypto.randomBytes(16)
+
+  const cipher = crypto.createCipheriv(algorithm, key, iv)
+  let encrypted = cipher.update(password, 'utf8', 'hex')
+  encrypted += cipher.final('hex')
+
+  // Retornar IV + encrypted (separados por :)
+  return iv.toString('hex') + ':' + encrypted
+}
+
+// Desencriptar contraseña
+function decryptPassword(encryptedData) {
+  try {
+    const algorithm = 'aes-256-cbc'
+    const key = getEncryptionKey()
+
+    const parts = encryptedData.split(':')
+    const iv = Buffer.from(parts[0], 'hex')
+    const encrypted = parts[1]
+
+    const decipher = crypto.createDecipheriv(algorithm, key, iv)
+    let decrypted = decipher.update(encrypted, 'hex', 'utf8')
+    decrypted += decipher.final('utf8')
+
+    return decrypted
+  } catch (error) {
+    console.error('Error desencriptando contraseña:', error)
+    return null
+  }
+}
+
+// Generar contraseña aleatoria segura
+function generateRandomPassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // Sin caracteres confusos (0, O, I, 1)
+  let password = 'iG-'
+
+  for (let i = 0; i < 7; i++) {
+    password += chars[Math.floor(Math.random() * chars.length)]
+    if (i === 3) password += '-' // Formato: iG-XXXX-XXX
+  }
+
+  return password
+}
+
+// Verificar contraseña
+function verifyAdminPassword(inputPassword) {
+  const encryptedPassword = store.get('encryptedAdminPassword')
+
+  if (!encryptedPassword) {
+    return false
+  }
+
+  const storedPassword = decryptPassword(encryptedPassword)
+  return storedPassword === inputPassword
+}
+
+// Establecer nueva contraseña
+function setAdminPassword(newPassword) {
+  const encrypted = encryptPassword(newPassword)
+  store.set('encryptedAdminPassword', encrypted)
+}
+
+// Obtener contraseña actual (desencriptada) - solo para recuperación
+function getAdminPassword() {
+  const encryptedPassword = store.get('encryptedAdminPassword')
+
+  if (!encryptedPassword) {
+    return null
+  }
+
+  return decryptPassword(encryptedPassword)
+}
+
+// ===== FIN SISTEMA DE SEGURIDAD =====
 
 // Configuración persistente
 const store = new Store({
   defaults: {
     apiUrl: 'http://localhost:8000/api/v1/documentos',
     apiToken: '', // Bearer Token de 64 caracteres
-    basePath: 'C:\\iGlobal', // Ruta base donde se encuentran las carpetas de empresa
+    basePath: 'C:\\iGlobal\\DTE', // Ruta base donde se encuentran las carpetas de empresa
     rut: '', // RUT de la empresa (sin puntos, con guión)
     autoStart: true,
     watcherEnabled: false,
     generatePDF417: true, // Generar código PDF417 del TED
     uploadInterval: 30000, // Intervalo para subir archivos de pending/ (30 segundos)
+    cafSyncInterval: 3600000, // Intervalo para sincronizar CAF (1 hora = 3600000ms)
     // Configuración de MySQL para conectar con el ERP
     mysqlHost: 'localhost',
     mysqlPort: 3306,
@@ -30,7 +119,7 @@ const store = new Store({
     mysqlDatabase: 'iglobal_dte',
     // Configuración para descargar CAF desde API
     cafEnabled: true,
-    folioPath: 'C:\\iGlobal\\RUT_EMPRESA\\FOLIO',
+    folioPath: 'C:\\iGlobal\\DTE\\RUT_EMPRESA\\FOLIO',
     // Configuración de emails
     emailNotifications: false,
     emailTo: '',
@@ -330,7 +419,7 @@ function convertirCaracteres(cadena) {
 }
 
 // Generar TED (DD + FRMT) - Portado desde C#
-async function generateTED(xmlContent, rutEmisor, tipoDTE, folio) {
+async function generateTED(xmlContent, rutEmisor, tipoDTE, folio, tmstFirma = null) {
   try {
     // Parsear XML para extraer datos necesarios
     const fechaMatch = xmlContent.match(/<FchEmis>([^<]+)<\/FchEmis>/)
@@ -372,9 +461,11 @@ async function generateTED(xmlContent, rutEmisor, tipoDTE, folio) {
       return null
     }
 
-    // Generar timestamp
-    const now = new Date()
-    const tmstFirma = now.toISOString().replace(/\.\d{3}Z$/, '')
+    // Usar timestamp proporcionado o generar uno nuevo
+    if (!tmstFirma) {
+      const now = new Date()
+      tmstFirma = now.toISOString().replace(/\.\d{3}Z$/, '')
+    }
 
     // Construir DD (igual que en C#)
     const DD_FRMT = `<DD><RE>${rutEmisor}</RE><TD>${tipoDTE}</TD><F>${folio}</F><FE>${fchEmis}</FE><RR>${rutRecep}</RR><RSR>${rznSocRecep}</RSR><MNT>${mntTotal}</MNT><IT1>${it1}</IT1><CAF version="1.0"><DA><RE>${rutEmisor}</RE><RS>${convertirCaracteres(rznSoc)}</RS><TD>${tipoDTE}</TD><RNG><D>${caf.fol_rng_d}</D><H>${caf.fol_rng_h}</H></RNG><FA>${caf.fol_fa}</FA><RSAPK><M>${caf.fol_rsapk_m}</M><E>${caf.fol_rsapk_e}</E></RSAPK><IDK>${caf.fol_idk}</IDK></DA><FRMA algoritmo="SHA1withRSA">${caf.fol_frma}</FRMA></CAF><TSTED>${tmstFirma}</TSTED></DD>`
@@ -445,9 +536,29 @@ async function syncCAFFromAPI() {
       return { success: false, message: 'RUT no configurado' }
     }
 
-    // Llamar al API REST v2 para obtener todos los CAF
+    // Obtener ORG_SUCURSAL de la tabla empresa
+    const rutSinGuion = configuredRut.replace('-', '')
+    let codigoInternoSucursal = '0' // Default: Casa Matriz
+
+    try {
+      const [empresaRows] = await connection.execute(
+        'SELECT ORG_SUCURSAL FROM empresa WHERE ORG_RUT = ? LIMIT 1',
+        [rutSinGuion]
+      )
+
+      if (empresaRows.length > 0 && empresaRows[0].ORG_SUCURSAL !== null) {
+        codigoInternoSucursal = String(empresaRows[0].ORG_SUCURSAL)
+        addLog('info', `✅ Código interno de sucursal: ${codigoInternoSucursal}`)
+      } else {
+        addLog('warning', 'Empresa no encontrada en BD local, usando sucursal 0 (Casa Matriz)')
+      }
+    } catch (dbError) {
+      addLog('warning', `Error consultando ORG_SUCURSAL: ${dbError.message}, usando sucursal 0`)
+    }
+
+    // Llamar al API REST v2 para obtener CAF filtrados por sucursal
     const baseUrl = store.get('apiUrl').replace(/\/api\/v1\/documentos.*$/, '')
-    const cafApiUrl = `${baseUrl}/api/v1/caf`.replace('localhost', '127.0.0.1')
+    const cafApiUrl = `${baseUrl}/api/v1/caf?codigos_internos=${codigoInternoSucursal}`.replace('localhost', '127.0.0.1')
 
     addLog('info', `Consultando CAF desde: ${cafApiUrl}`)
 
@@ -482,6 +593,9 @@ async function syncCAFFromAPI() {
       fs.mkdirSync(procesadoPath, { recursive: true })
     }
 
+    // Array para recolectar IDs de CAFs sincronizados exitosamente
+    const syncedCafIds = []
+
     // Procesar cada CAF
     for (const cafItem of cafs) {
       try {
@@ -494,7 +608,8 @@ async function syncCAFFromAPI() {
           fecha_autorizacion: autorizacion,
           ambiente,
           activo,
-          xml: xmlBase64
+          xml: xmlBase64,
+          sucursal
         } = cafItem
 
         // Calcular ultimo_usado desde folios_disponibles
@@ -505,6 +620,11 @@ async function syncCAFFromAPI() {
         if (!xmlBase64) {
           addLog('error', `CAF sin contenido XML (tipo ${documentoId}). Campos recibidos: ${Object.keys(cafItem).join(', ')}`)
           continue
+        }
+
+        // Mostrar información de sucursal si está disponible
+        if (sucursal) {
+          addLog('info', `📍 Sucursal: ${sucursal.nombre} (código interno: ${sucursal.codigo_interno})`)
         }
 
         // Decodificar XML del CAF
@@ -588,12 +708,18 @@ async function syncCAFFromAPI() {
           addLog('success', `✅ CAF insertado: Tipo ${documentoId} (${desde}-${hasta}), disponibles: ${disponibles}`)
           cafCount++
 
+          // Añadir ID a la lista de CAFs sincronizados exitosamente
+          syncedCafIds.push(cafId)
+
         } catch (dbError) {
           if (dbError.code === 'ER_DUP_ENTRY') {
             addLog('info', `CAF duplicado: Tipo ${documentoId}, saltando...`)
             cafUpdated++
+            // Aunque sea duplicado, lo marcamos como sincronizado
+            syncedCafIds.push(cafId)
           } else {
             addLog('error', `Error insertando CAF tipo ${documentoId}: ${dbError.message}`)
+            // NO añadimos el ID si falló la inserción
           }
         }
 
@@ -607,6 +733,36 @@ async function syncCAFFromAPI() {
       : `${cafUpdated} CAF verificados, todos actualizados`
 
     addLog('success', `✅ Sincronización completada: ${totalMsg}`)
+
+    // Marcar CAFs como sincronizados en el servidor
+    if (syncedCafIds.length > 0) {
+      try {
+        addLog('info', `📤 Marcando ${syncedCafIds.length} CAF(s) como sincronizados en el servidor...`)
+
+        const markSyncUrl = `${baseUrl}/api/v1/caf/marcar-sincronizados`.replace('localhost', '127.0.0.1')
+
+        const markResponse = await axios.post(markSyncUrl, {
+          caf_ids: syncedCafIds
+        }, {
+          headers: {
+            'Authorization': `Bearer ${apiToken}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          timeout: 30000,
+          family: 4
+        })
+
+        if (markResponse.data && markResponse.data.success) {
+          addLog('success', `✅ ${markResponse.data.updated_count} CAF(s) marcados como sincronizados`)
+        }
+      } catch (markError) {
+        const markErrorMsg = markError.response?.data?.message || markError.message
+        addLog('warning', `⚠️ No se pudieron marcar los CAFs como sincronizados: ${markErrorMsg}`)
+        // No retornamos error aquí porque la sincronización local fue exitosa
+      }
+    }
+
     return { success: true, message: totalMsg, count: cafCount, updated: cafUpdated }
 
   } catch (error) {
@@ -914,29 +1070,44 @@ async function processXMLFile(filePath) {
       return { success: true, fileName, skipped: true }
     }
 
+    // Generar timestamp AHORA (antes de generar TED y PNG)
+    // Este timestamp se usará para:
+    // 1. Renombrar el archivo XML
+    // 2. Incluirlo en el TED para generar el PNG
+    // 3. Enviarlo al API para que genere el mismo PNG
+    const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '') // Formato: 2024-12-01T11:28:54
+    const timestampForFileName = timestamp.replace(/[-:]/g, '').replace('T', 'T') // Formato: 2024-12-01T112854
+    addLog('info', `🕐 Timestamp generado: ${timestamp}`)
+
+    // Construir nuevo nombre de archivo con timestamp
+    const baseFileName = path.basename(fileName, '.xml')
+    const newFileName = `${baseFileName}_${timestampForFileName}.xml`
+
     // Generar TED desde MySQL para el PDF417 (igual que C#)
-    addLog('info', `Generando TED y PDF417: ${fileName}`)
-    const tedData = await generateTED(xmlContent, rut, tipoDTE, folio)
+    addLog('info', `Generando TED y PDF417: ${newFileName}`)
+    const tedData = await generateTED(xmlContent, rut, tipoDTE, folio, timestamp)
 
     if (!tedData) {
       throw new Error('No se pudo generar el TED para PDF417')
     }
 
-    // Generar PDF417 usando el TED generado (ANTES de mover)
-    await generatePDF417FromTED(filePath, tedData.TED, fileName)
+    // Generar PDF417 usando el TED generado (con timestamp incluido)
+    // El PNG tendrá el mismo nombre base que el XML (con timestamp)
+    await generatePDF417FromTED(filePath, tedData.TED, newFileName)
 
-    // Mover XML a carpeta PENDING (esperando subida)
+    // Mover XML a carpeta PENDING con el nuevo nombre (incluyendo timestamp)
     // Crear carpeta PENDING si no existe
     if (!fs.existsSync(pendingPath)) {
       fs.mkdirSync(pendingPath, { recursive: true })
     }
 
-    const pendingFilePath = path.join(pendingPath, fileName)
+    const pendingFilePath = path.join(pendingPath, newFileName)
     fs.renameSync(filePath, pendingFilePath)
+    addLog('info', `📝 Archivo renombrado a: ${newFileName}`)
 
-    addLog('success', `XML procesado y movido a PENDING: ${fileName}`)
+    addLog('success', `XML procesado y movido a PENDING: ${newFileName}`)
 
-    return { success: true, fileName, folio }
+    return { success: true, fileName: newFileName, folio, timestamp }
 
   } catch (error) {
     addLog('error', `Error procesando XML localmente: ${fileName} - ${error.message}`)
@@ -1350,13 +1521,14 @@ function startWatcher() {
       addLog('info', 'Sincronizando CAF al iniciar watcher...')
       syncCAFFromAPI()
 
-      // Iniciar intervalo de sincronización de CAF (cada 1 hora)
+      // Iniciar intervalo de sincronización de CAF
+      const cafInterval = store.get('cafSyncInterval')
       cafSyncInterval = setInterval(() => {
-        addLog('info', 'Sincronización automática de CAF (cada 1 hora)')
+        addLog('info', `Sincronización automática de CAF (cada ${cafInterval / 1000}s)`)
         syncCAFFromAPI()
-      }, 3600000) // 1 hora = 3600000ms
+      }, cafInterval)
 
-      addLog('info', 'Intervalo de sincronización CAF iniciado (cada 1 hora)')
+      addLog('info', `Intervalo de sincronización CAF iniciado (cada ${cafInterval / 60000} min)`)
     }
 
     // Notificar a la ventana del cambio de estado
@@ -1756,10 +1928,78 @@ autoUpdater.on('update-downloaded', (info) => {
   }
 })
 
+// ===== IPC HANDLERS PARA GESTIÓN DE CONTRASEÑA =====
+
+// Verificar si existe contraseña
+ipcMain.handle('has-admin-password', () => {
+  return !!store.get('encryptedAdminPassword')
+})
+
+// Verificar contraseña
+ipcMain.handle('verify-admin-password', (event, password) => {
+  return verifyAdminPassword(password)
+})
+
+// Obtener contraseña actual (solo para recuperación, requiere confirmación)
+ipcMain.handle('get-admin-password', () => {
+  return getAdminPassword()
+})
+
+// Cambiar contraseña (requiere contraseña actual)
+ipcMain.handle('change-admin-password', (event, currentPassword, newPassword) => {
+  if (!verifyAdminPassword(currentPassword)) {
+    return { success: false, message: 'Contraseña actual incorrecta' }
+  }
+
+  if (!newPassword || newPassword.length < 6) {
+    return { success: false, message: 'La nueva contraseña debe tener al menos 6 caracteres' }
+  }
+
+  setAdminPassword(newPassword)
+  store.set('passwordChangeRequired', false) // Marcar que ya se cambió
+  addLog('info', '🔐 Contraseña de administrador actualizada')
+  return { success: true, message: 'Contraseña actualizada exitosamente' }
+})
+
+// SOLO PARA DESARROLLO: Resetear contraseña (simular primera instalación)
+ipcMain.handle('dev-reset-password', () => {
+  if (!app.isPackaged) { // Solo funciona en modo desarrollo
+    store.delete('encryptedAdminPassword')
+    store.delete('passwordChangeRequired')
+    addLog('info', '🔧 [DEV] Contraseña reseteada - reinicia la app')
+    return { success: true, message: 'Contraseña reseteada. Reinicia la aplicación.' }
+  }
+  return { success: false, message: 'Este comando solo está disponible en modo desarrollo' }
+})
+
+// ===== FIN IPC HANDLERS DE CONTRASEÑA =====
+
 // App ready
 app.whenReady().then(() => {
   createWindow()
   createTray()
+
+  // Inicializar contraseña de administrador si no existe
+  if (!store.get('encryptedAdminPassword')) {
+    const initialPassword = generateRandomPassword()
+    setAdminPassword(initialPassword)
+    store.set('passwordChangeRequired', true) // Marcar que se debe cambiar
+    addLog('info', `🔐 Contraseña de administrador generada: ${initialPassword}`)
+    console.log('='.repeat(60))
+    console.log('CONTRASEÑA DE ADMINISTRADOR GENERADA')
+    console.log('='.repeat(60))
+    console.log(`Contraseña: ${initialPassword}`)
+    console.log('Guarda esta contraseña en un lugar seguro.')
+    console.log('La necesitarás para acceder a la configuración.')
+    console.log('='.repeat(60))
+
+    // Mostrar diálogo al usuario con la contraseña y OBLIGAR a cambiarla
+    setTimeout(() => {
+      if (mainWindow) {
+        mainWindow.webContents.send('show-initial-password', initialPassword)
+      }
+    }, 2000)
+  }
 
   // Verificar actualizaciones al iniciar (solo en producción)
   if (app.isPackaged) {
