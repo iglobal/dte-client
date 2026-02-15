@@ -1726,6 +1726,9 @@ ipcMain.handle('get-config', () => {
     watcherEnabled: watcher !== null, // Estado real del watcher
     generatePDF417: store.get('generatePDF417'),
     uploadInterval: store.get('uploadInterval'),
+    cafSyncInterval: store.get('cafSyncInterval'),
+    maxRetries: store.get('maxRetries'),
+    retryDelay: store.get('retryDelay'),
     // Configuración MySQL
     mysqlHost: store.get('mysqlHost'),
     mysqlPort: store.get('mysqlPort'),
@@ -1741,9 +1744,7 @@ ipcMain.handle('get-config', () => {
     smtpHost: store.get('smtpHost'),
     smtpPort: store.get('smtpPort'),
     smtpUser: store.get('smtpUser'),
-    smtpPass: store.get('smtpPass'),
-    maxRetries: store.get('maxRetries'),
-    retryDelay: store.get('retryDelay')
+    smtpPass: store.get('smtpPass')
   }
 })
 
