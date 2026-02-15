@@ -10,7 +10,7 @@ const mysql = require('mysql2/promise')
 const crypto = require('crypto')
 const iconv = require('iconv-lite')
 const os = require('os')
-const pLimit = require('p-limit')
+const pLimit = require('p-limit').default || require('p-limit')
 // Removido: Google Cloud Storage - ahora usamos API Laravel
 
 // ===== HELPER: TIMESTAMP EN ZONA HORARIA DE CHILE =====
