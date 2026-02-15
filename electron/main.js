@@ -10,6 +10,7 @@ const mysql = require('mysql2/promise')
 const crypto = require('crypto')
 const iconv = require('iconv-lite')
 const os = require('os')
+const pLimit = require('p-limit')
 // Removido: Google Cloud Storage - ahora usamos API Laravel
 
 // ===== HELPER: TIMESTAMP EN ZONA HORARIA DE CHILE =====
@@ -177,10 +178,74 @@ let watcher = null
 let logs = []
 let uploadInterval = null // Intervalo para subir archivos desde pending/
 let logIdCounter = 0 // Contador para IDs únicos de logs
-let isProcessingQueue = false // Flag para evitar procesamiento concurrente
-let processingQueue = [] // Cola de archivos a procesar
-let isUploadingPending = false // Flag para evitar múltiples subidas simultáneas
-let cafSyncInterval = null // Intervalo para sincronizar CAF (cada 1 hora)
+
+// ===== ARQUITECTURA ROBUSTA DE CONCURRENCIA =====
+
+// MySQL Connection Pool (reutilizar conexiones en lugar de abrir/cerrar cada vez)
+let mysqlPool = null
+
+// Control de concurrencia con límites
+const processingLimit = pLimit(5) // Máximo 5 archivos XML procesándose en paralelo
+const uploadLimit = pLimit(3) // Máximo 3 subidas al API en paralelo
+
+// Flags de protección contra ejecuciones concurrentes
+let isProcessingQueue = false // Flag para evitar múltiples workers de procesamiento
+let isUploadingPending = false // Flag para evitar múltiples ciclos de subida
+let isSyncingCAF = false // Flag para evitar múltiples sincronizaciones de CAF
+
+// Colas
+let processingQueue = [] // Cola de archivos XML pendientes de procesar
+let cafSyncInterval = null // Intervalo para sincronizar CAF
+
+// ===== MYSQL CONNECTION POOL =====
+
+/**
+ * Obtiene o crea el pool de conexiones MySQL
+ * @returns {Promise<mysql.Pool>} Pool de conexiones
+ */
+async function getMySQLPool() {
+  if (mysqlPool) {
+    return mysqlPool
+  }
+
+  try {
+    mysqlPool = mysql.createPool({
+      host: store.get('mysqlHost'),
+      port: store.get('mysqlPort'),
+      user: store.get('mysqlUser'),
+      password: store.get('mysqlPassword'),
+      database: store.get('mysqlDatabase'),
+      waitForConnections: true,
+      connectionLimit: 10, // Máximo 10 conexiones en el pool
+      queueLimit: 0, // Sin límite de cola
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 0
+    })
+
+    addLog('info', '✅ MySQL connection pool creado (max 10 conexiones)')
+    return mysqlPool
+  } catch (error) {
+    addLog('error', `❌ Error creando MySQL pool: ${error.message}`)
+    throw error
+  }
+}
+
+/**
+ * Cierra el pool de conexiones MySQL
+ */
+async function closeMySQLPool() {
+  if (mysqlPool) {
+    try {
+      await mysqlPool.end()
+      mysqlPool = null
+      addLog('info', '🔌 MySQL connection pool cerrado')
+    } catch (error) {
+      addLog('error', `Error cerrando MySQL pool: ${error.message}`)
+    }
+  }
+}
+
+// ===== FIN MYSQL CONNECTION POOL =====
 
 // Helper: Obtener rutas dinámicas basadas en el RUT configurado
 function getPaths() {
@@ -386,22 +451,15 @@ function addLog(type, message) {
 
 // Consultar CAF desde MySQL
 async function getCAF(rutEmisor, tipoDTE, folio) {
-  let connection
   try {
-    // Crear conexión a MySQL
-    connection = await mysql.createConnection({
-      host: store.get('mysqlHost'),
-      port: store.get('mysqlPort'),
-      user: store.get('mysqlUser'),
-      password: store.get('mysqlPassword'),
-      database: store.get('mysqlDatabase')
-    })
+    // Obtener conexión del pool (en lugar de crear nueva)
+    const pool = await getMySQLPool()
 
     // Remover guión del RUT para la consulta
     const rutSinGuion = rutEmisor.replace('-', '')
 
     // Consulta SQL (usando nombres de columnas en MAYÚSCULAS según schema MySQL)
-    const [rows] = await connection.execute(
+    const [rows] = await pool.execute(
       `SELECT FOL_RNG_D, FOL_RNG_H, FOL_FA, FOL_RSAPK_M, FOL_RSAPK_E, FOL_IDK, FOL_FRMA, FOL_RSASK, FOL_RSAPUBK, FOL_RE, FOL_RS
        FROM folio
        WHERE ORG_RUT = ? AND FOL_TD = ? AND ? BETWEEN FOL_RNG_D AND FOL_RNG_H`,
@@ -412,7 +470,6 @@ async function getCAF(rutEmisor, tipoDTE, folio) {
       addLog('error', `No se encontró CAF para RUT: ${rutEmisor}, Tipo: ${tipoDTE}, Folio: ${folio}`)
       return null
     }
-
 
     const caf = {
       fol_rng_d: rows[0].FOL_RNG_D,
@@ -432,11 +489,8 @@ async function getCAF(rutEmisor, tipoDTE, folio) {
   } catch (error) {
     addLog('error', `Error consultando CAF: ${error.message}`)
     return null
-  } finally {
-    if (connection) {
-      await connection.end()
-    }
   }
+  // No hay finally - el pool se reutiliza
 }
 
 // Convertir caracteres especiales (igual que C#)
@@ -531,12 +585,19 @@ async function generateTED(xmlContent, rutEmisor, tipoDTE, folio, tmstFirma = nu
 
 // Sincronizar CAF desde API REST v2 y guardar en MySQL
 async function syncCAFFromAPI() {
+  // ===== PROTECCIÓN CONTRA EJECUCIONES CONCURRENTES =====
+  if (isSyncingCAF) {
+    addLog('info', '⏭️ Sincronización de CAF ya en progreso, saltando...')
+    return { success: false, message: 'Sincronización ya en progreso' }
+  }
+
   if (!store.get('cafEnabled')) {
     addLog('info', 'Sincronización de CAF desactivada')
     return { success: false, message: 'Sincronización de CAF desactivada' }
   }
 
-  let connection
+  isSyncingCAF = true // Bloquear nuevas ejecuciones
+
   let cafCount = 0
   let cafUpdated = 0
 
@@ -550,14 +611,8 @@ async function syncCAFFromAPI() {
       return { success: false, message: 'Bearer Token no configurado' }
     }
 
-    // Conectar a MySQL
-    connection = await mysql.createConnection({
-      host: store.get('mysqlHost'),
-      port: store.get('mysqlPort'),
-      user: store.get('mysqlUser'),
-      password: store.get('mysqlPassword'),
-      database: store.get('mysqlDatabase')
-    })
+    // Obtener conexión del pool (en lugar de crear nueva)
+    const pool = await getMySQLPool()
 
     // Obtener RUT configurado
     const configuredRut = store.get('rut')
@@ -571,7 +626,7 @@ async function syncCAFFromAPI() {
     let codigoInternoSucursal = '0' // Default: Casa Matriz
 
     try {
-      const [empresaRows] = await connection.execute(
+      const [empresaRows] = await pool.execute(
         'SELECT ORG_SUCURSAL FROM empresa WHERE ORG_RUT = ? LIMIT 1',
         [rutSinGuion]
       )
@@ -697,7 +752,7 @@ async function syncCAFFromAPI() {
         }
 
         // Verificar si ya existe en BD (usando nombres de columnas en MAYÚSCULAS)
-        const [existing] = await connection.execute(
+        const [existing] = await pool.execute(
           'SELECT FOL_NOMBRE FROM folio WHERE ORG_RUT = ? AND FOL_TD = ? AND FOL_RNG_D = ? AND FOL_RNG_H = ?',
           [cafData.org_rut, cafData.fol_td, cafData.fol_rng_d, cafData.fol_rng_h]
         )
@@ -710,7 +765,7 @@ async function syncCAFFromAPI() {
 
         // Insertar en MySQL (usando nombres de columnas en MAYÚSCULAS)
         try {
-          await connection.execute(
+          await pool.execute(
             `INSERT INTO folio (FOL_NOMBRE, FOL_RE, FOL_RS, FOL_TD, FOL_RNG_D, FOL_RNG_H, FOL_FA, FOL_RSAPK_M, FOL_RSAPK_E, FOL_IDK, FOL_FRMA, FOL_RSASK, FOL_RSAPUBK, ORG_RUT)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
@@ -800,9 +855,7 @@ async function syncCAFFromAPI() {
     addLog('error', `❌ Error sincronizando CAF: ${errorMsg}`)
     return { success: false, message: errorMsg }
   } finally {
-    if (connection) {
-      await connection.end()
-    }
+    isSyncingCAF = false // Liberar el flag para permitir próximas sincronizaciones
   }
 }
 
@@ -992,7 +1045,7 @@ async function generatePDF417FromTED(xmlFilePath, tedContent, fileName) {
   addLog('success', `PDF417 generado: ${baseFileName}.png (${pngBuffer.length} bytes)`)
 }
 
-// Procesador de cola - procesa archivos uno por uno
+// Procesador de cola - procesa archivos en paralelo con límite de concurrencia
 async function processQueueWorker() {
   if (isProcessingQueue) {
     return // Ya hay un worker procesando
@@ -1001,17 +1054,38 @@ async function processQueueWorker() {
   isProcessingQueue = true
 
   try {
-    while (processingQueue.length > 0) {
-      const filePath = processingQueue.shift()
+    // Obtener todos los archivos de la cola y limpiarla
+    const filesToProcess = [...processingQueue]
+    processingQueue = []
 
-      // Verificar que el archivo no fue ya procesado por otro worker
-      if (!fs.existsSync(filePath)) {
-        addLog('info', `Archivo ya procesado, saltando: ${path.basename(filePath)}`)
-        continue
-      }
-
-      await processXMLFile(filePath)
+    if (filesToProcess.length === 0) {
+      return
     }
+
+    addLog('info', `🚀 Iniciando procesamiento paralelo de ${filesToProcess.length} archivo(s) (máx 5 simultáneos)`)
+
+    // Procesar archivos en paralelo con límite de concurrencia (máximo 5 a la vez)
+    const results = await Promise.all(
+      filesToProcess.map(filePath =>
+        processingLimit(async () => {
+          // Verificar que el archivo aún existe
+          if (!fs.existsSync(filePath)) {
+            addLog('info', `Archivo ya procesado, saltando: ${path.basename(filePath)}`)
+            return { success: false, skipped: true }
+          }
+
+          return await processXMLFile(filePath)
+        })
+      )
+    )
+
+    // Contar resultados
+    const successful = results.filter(r => r && r.success).length
+    const failed = results.filter(r => r && !r.success && !r.skipped).length
+    const skipped = results.filter(r => r && r.skipped).length
+
+    addLog('success', `✅ Batch completado: ${successful} exitosos, ${failed} fallidos, ${skipped} saltados`)
+
   } catch (error) {
     addLog('error', `Error en worker de procesamiento: ${error.message}`)
   } finally {
@@ -1185,11 +1259,11 @@ async function processXMLFile(filePath) {
   }
 }
 
-// Subir archivos desde PENDING con reintentos
+// Subir archivos desde PENDING con reintentos (procesamiento paralelo)
 async function uploadPendingFiles() {
-  // Evitar ejecuciones concurrentes
+  // ===== PROTECCIÓN CONTRA EJECUCIONES CONCURRENTES =====
   if (isUploadingPending) {
-    addLog('info', 'Ya hay una subida en progreso, saltando...')
+    addLog('info', '⏭️ Subida ya en progreso, saltando...')
     return
   }
 
@@ -1210,20 +1284,31 @@ async function uploadPendingFiles() {
       return
     }
 
-    addLog('info', `Iniciando subida de ${files.length} archivo(s) desde PENDING`)
+    addLog('info', `🚀 Iniciando subida paralela de ${files.length} archivo(s) desde PENDING (máx 3 simultáneos)`)
 
-    for (const fileName of files) {
-      // Verificar que el archivo aún existe (pudo ser procesado por otra instancia)
-      const filePath = path.join(pendingPath, fileName)
-      if (!fs.existsSync(filePath)) {
-        addLog('info', `Archivo ya procesado, saltando: ${fileName}`)
-        continue
-      }
+    // Subir archivos en paralelo con límite de concurrencia (máximo 3 a la vez)
+    const results = await Promise.all(
+      files.map(fileName =>
+        uploadLimit(async () => {
+          // Verificar que el archivo aún existe
+          const filePath = path.join(pendingPath, fileName)
+          if (!fs.existsSync(filePath)) {
+            addLog('info', `Archivo ya procesado, saltando: ${fileName}`)
+            return { success: false, skipped: true }
+          }
 
-      await uploadSingleFile(fileName, 0)
-    }
+          return await uploadSingleFile(fileName, 0)
+        })
+      )
+    )
 
-    addLog('success', 'Proceso de subida completado')
+    // Contar resultados
+    const successful = results.filter(r => r && r.success).length
+    const failed = results.filter(r => r && !r.success && !r.skipped).length
+    const skipped = results.filter(r => r && r.skipped).length
+
+    addLog('success', `✅ Batch de subida completado: ${successful} exitosos, ${failed} fallidos, ${skipped} saltados`)
+
   } catch (error) {
     addLog('error', `Error en proceso de subida: ${error.message}`)
   } finally {
@@ -1604,6 +1689,11 @@ function stopWatcher() {
       addLog('info', `Limpiando cola de procesamiento (${processingQueue.length} archivos pendientes)`)
       processingQueue = []
     }
+
+    // Cerrar pool de conexiones MySQL
+    closeMySQLPool().catch(err => {
+      addLog('error', `Error cerrando pool MySQL: ${err.message}`)
+    })
 
     // Notificar a la ventana del cambio de estado
     if (mainWindow) {
@@ -2061,11 +2151,13 @@ app.on('window-all-closed', (event) => {
   event.preventDefault()
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', async () => {
   app.isQuitting = true
   if (watcher) {
     watcher.close()
   }
+  // Cerrar pool de conexiones MySQL al salir
+  await closeMySQLPool()
 })
 
 app.on('activate', () => {
