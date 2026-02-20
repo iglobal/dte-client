@@ -1054,37 +1054,38 @@ async function processQueueWorker() {
   isProcessingQueue = true
 
   try {
-    // Obtener todos los archivos de la cola y limpiarla
-    const filesToProcess = [...processingQueue]
-    processingQueue = []
+    // Procesar en bucle hasta vaciar la cola completamente
+    while (processingQueue.length > 0) {
+      // Obtener todos los archivos de la cola actual y limpiarla
+      const filesToProcess = [...processingQueue]
+      processingQueue = []
 
-    if (filesToProcess.length === 0) {
-      return
+      addLog('info', `🚀 Iniciando procesamiento paralelo de ${filesToProcess.length} archivo(s) (máx 5 simultáneos)`)
+
+      // Procesar archivos en paralelo con límite de concurrencia (máximo 5 a la vez)
+      const results = await Promise.all(
+        filesToProcess.map(filePath =>
+          processingLimit(async () => {
+            // Verificar que el archivo aún existe
+            if (!fs.existsSync(filePath)) {
+              addLog('info', `Archivo ya procesado, saltando: ${path.basename(filePath)}`)
+              return { success: false, skipped: true }
+            }
+
+            return await processXMLFile(filePath)
+          })
+        )
+      )
+
+      // Contar resultados
+      const successful = results.filter(r => r && r.success).length
+      const failed = results.filter(r => r && !r.success && !r.skipped).length
+      const skipped = results.filter(r => r && r.skipped).length
+
+      addLog('success', `✅ Batch completado: ${successful} exitosos, ${failed} fallidos, ${skipped} saltados`)
     }
 
-    addLog('info', `🚀 Iniciando procesamiento paralelo de ${filesToProcess.length} archivo(s) (máx 5 simultáneos)`)
-
-    // Procesar archivos en paralelo con límite de concurrencia (máximo 5 a la vez)
-    const results = await Promise.all(
-      filesToProcess.map(filePath =>
-        processingLimit(async () => {
-          // Verificar que el archivo aún existe
-          if (!fs.existsSync(filePath)) {
-            addLog('info', `Archivo ya procesado, saltando: ${path.basename(filePath)}`)
-            return { success: false, skipped: true }
-          }
-
-          return await processXMLFile(filePath)
-        })
-      )
-    )
-
-    // Contar resultados
-    const successful = results.filter(r => r && r.success).length
-    const failed = results.filter(r => r && !r.success && !r.skipped).length
-    const skipped = results.filter(r => r && r.skipped).length
-
-    addLog('success', `✅ Batch completado: ${successful} exitosos, ${failed} fallidos, ${skipped} saltados`)
+    addLog('info', '✨ Cola de procesamiento vacía')
 
   } catch (error) {
     addLog('error', `Error en worker de procesamiento: ${error.message}`)
