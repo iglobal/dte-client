@@ -602,12 +602,10 @@ async function syncCAFFromAPI() {
   let cafUpdated = 0
 
   try {
-    addLog('info', '🔄 Sincronizando CAF desde API REST v2...')
-
     // Validar Bearer Token
     const apiToken = store.get('apiToken')
     if (!apiToken || apiToken.trim().length === 0) {
-      addLog('error', 'Bearer Token no configurado')
+      addLog('error', 'Bearer Token no configurado para sincronización de CAF')
       return { success: false, message: 'Bearer Token no configurado' }
     }
 
@@ -617,7 +615,7 @@ async function syncCAFFromAPI() {
     // Obtener RUT configurado
     const configuredRut = store.get('rut')
     if (!configuredRut) {
-      addLog('warning', 'RUT no configurado')
+      addLog('warning', 'RUT no configurado, no se puede sincronizar CAF')
       return { success: false, message: 'RUT no configurado' }
     }
 
@@ -633,9 +631,6 @@ async function syncCAFFromAPI() {
 
       if (empresaRows.length > 0 && empresaRows[0].ORG_SUCURSAL !== null) {
         codigoInternoSucursal = String(empresaRows[0].ORG_SUCURSAL)
-        addLog('info', `✅ Código interno de sucursal: ${codigoInternoSucursal}`)
-      } else {
-        addLog('warning', 'Empresa no encontrada en BD local, usando sucursal 0 (Casa Matriz)')
       }
     } catch (dbError) {
       addLog('warning', `Error consultando ORG_SUCURSAL: ${dbError.message}, usando sucursal 0`)
@@ -644,8 +639,6 @@ async function syncCAFFromAPI() {
     // Llamar al API REST v2 para obtener CAF filtrados por sucursal
     const baseUrl = store.get('apiUrl').replace(/\/api\/v1\/documentos.*$/, '')
     const cafApiUrl = `${baseUrl}/api/v1/caf?codigos_internos=${codigoInternoSucursal}`.replace('localhost', '127.0.0.1')
-
-    addLog('info', `Consultando CAF desde: ${cafApiUrl}`)
 
     const response = await axios.get(cafApiUrl, {
       headers: {
@@ -657,14 +650,12 @@ async function syncCAFFromAPI() {
     })
 
     if (!response.data || !response.data.cafs || response.data.cafs.length === 0) {
-      addLog('info', 'No se encontraron CAF en el API')
+      // Sin CAF disponibles - no loguear, es situación normal
       return { success: true, message: 'No hay CAF disponibles', count: 0 }
     }
 
     const cafs = response.data.cafs
     const empresaInfo = response.data.empresa
-
-    addLog('info', `📦 ${cafs.length} CAF(s) encontrados para ${empresaInfo.razon_social}`)
 
     // Obtener rutas para guardar archivos
     const { folioPath } = getPaths()
@@ -1636,17 +1627,15 @@ function startWatcher() {
 
     // Sincronizar CAF al iniciar
     if (store.get('cafEnabled')) {
-      addLog('info', 'Sincronizando CAF al iniciar watcher...')
       syncCAFFromAPI()
 
       // Iniciar intervalo de sincronización de CAF
       const cafInterval = store.get('cafSyncInterval')
       cafSyncInterval = setInterval(() => {
-        addLog('info', `Sincronización automática de CAF (cada ${cafInterval / 1000}s)`)
         syncCAFFromAPI()
       }, cafInterval)
 
-      addLog('info', `Intervalo de sincronización CAF iniciado (cada ${cafInterval / 60000} min)`)
+      addLog('info', `Intervalo de sincronización CAF: cada ${cafInterval >= 60000 ? (cafInterval / 60000).toFixed(0) + ' min' : (cafInterval / 1000) + ' seg'}`)
     }
 
     // Notificar a la ventana del cambio de estado
@@ -2134,12 +2123,9 @@ app.whenReady().then(() => {
 
   // Sincronizar CAF al iniciar la aplicación (si está habilitado)
   if (store.get('cafEnabled')) {
-    addLog('info', '🔄 Sincronizando CAF al iniciar aplicación...')
     syncCAFFromAPI().then(result => {
-      if (result.success) {
-        addLog('success', `CAF sincronizado: ${result.message}`)
-      } else {
-        addLog('warning', `No se pudo sincronizar CAF: ${result.message}`)
+      if (!result.success && result.message !== 'No hay CAF disponibles') {
+        addLog('warning', `No se pudo sincronizar CAF al inicio: ${result.message}`)
       }
     }).catch(error => {
       addLog('error', `Error sincronizando CAF al inicio: ${error.message}`)
